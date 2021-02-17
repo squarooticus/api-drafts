@@ -5,7 +5,7 @@
 TAPS Working Group                                      B. Trammell, Ed.
 Internet-Draft                                   Google Switzerland GmbH
 Intended status: Standards Track                           M. Welzl, Ed.
-Expires: 1 August 2021                                University of Oslo
+Expires: 21 August 2021                               University of Oslo
                                                              T. Enghardt
                                                                  Netflix
                                                             G. Fairhurst
@@ -22,7 +22,7 @@ Expires: 1 August 2021                                University of Oslo
                                                               Apple Inc.
                                                                  K. Rose
                                                Akamai Technologies, Inc.
-                                                         28 January 2021
+                                                        17 February 2021
 
 
      An Abstract Application Layer Interface to Transport Services
@@ -54,7 +54,7 @@ Status of This Memo
    time.  It is inappropriate to use Internet-Drafts as reference
    material or to cite them other than as "work in progress."
 
-   This Internet-Draft will expire on 1 August 2021.
+   This Internet-Draft will expire on 21 August 2021.
 
 Copyright Notice
 
@@ -130,7 +130,8 @@ Table of Contents
        6.1.7.  Policy for using Multi-Path Transports
        6.1.8.  Bounds on Send or Receive Rate
        6.1.9.  Group Connection Limit
-       6.1.10. Read-only Connection Properties
+       6.1.10. Isolate Session
+       6.1.11. Read-only Connection Properties
      6.2.  TCP-specific Properties: User Timeout Option (UTO)
        6.2.1.  Advertised User Timeout
        6.2.2.  User Timeout Enabled
@@ -165,6 +166,7 @@ Table of Contents
    Appendix A.  Implementation Mapping
      A.1.  Types
      A.2.  Events and Errors
+     A.3.  Time Duration
    Appendix B.  Convenience Functions
      B.1.  Adding Preference Properties
      B.2.  Transport Property Profiles
@@ -948,31 +950,14 @@ Connection.Close()
 
    TransportProperties.Set(property, value)
 
-   Transport Properties may also be restored to implementation defaults:
-
-   TransportProperties.Unset(property)
-
    To aid readability, implementations MAY provide additional
    convenience functions to simplify use of Selection Properties: see
    Appendix B.1 for examples.  In addition, implementations MAY provide
    a mechanism to create TransportProperties objects that are
    preconfigured for common use cases as outlined in Appendix B.2.
 
-   For an existing Connection, the Transport Properties can be queried
-   any time by using the following call on the Connection Object:
-
-   TransportProperties := Connection.GetTransportProperties()
-
-   An individual property is then queried via the following call on the
-   "TransportProperties" object:
-
-   value := TransportProperties.Get(property)
-
-   If the given Transport Property is of type Boolean, "Has" may be
-   provided as an alias for "Get", useful for readability in such
-   constructions as the following:
-
-   if TransportProperties.Has(boolean_property) then ...
+   Transport Properties for an established connection can be queried via
+   the Connection object, as outlined in Section 6.
 
    A Connection gets its Transport Properties either by being explicitly
    configured via a Preconnection, by configuration after establishment,
@@ -1783,6 +1768,8 @@ SecurityParameters.Set(signature-algorithm, "ed25519")
    At any point, the application can query Connection Properties.
 
    ConnectionProperties := Connection.GetProperties()
+   value := ConnectionProperties.Get(property)
+   if ConnectionProperties.Has(boolean_or_preference_property) then ...
 
    Depending on the status of the connection, the queried Connection
    Properties will include different information:
@@ -1794,18 +1781,21 @@ SecurityParameters.Set(signature-algorithm, "ed25519")
       not be used for sending if the connection was created with the
       Selection Property "Direction of Communication" set to
       "unidirectional receive" or if a Message marked as "Final" was
-      sent over this connection, see Section 7.1.3.5.
+      sent over this connection.  See Section 7.1.3.5.
 
    *  Whether the connection can be used to receive data.  A connection
       cannot be used for reading if the connection was created with the
       Selection Property "Direction of Communication" set to
       "unidirectional send" or if a Message marked as "Final" was
-      received, see Section 7.3.3.3.  The latter is only supported by
+      received.  See Section 7.3.3.3.  The latter is only supported by
       certain transport protocols, e.g., by TCP as half-closed
       connection.
 
-   *  For Connections that are Establishing: Transport Properties that
-      the application specified on the Preconnection, see Section 4.2.
+   *  For Connections that are Established or Closing: Transport
+      Properties that the application specified on the Preconnection.
+      See Section 4.2.  Selection properties of type "Preference" will
+      be exposed as boolean values indicating whether or not the
+      property applies to the selected transport.
 
    *  For Connections that are Established, Closing, or Closed:
       Selection (Section 4.2) and Connection Properties (Section 6.1) of
@@ -1875,30 +1865,30 @@ SecurityParameters.Set(signature-algorithm, "ed25519")
 
    Default:  Disabled
 
-   This property specifies how many seconds to wait before deciding that
-   an active Connection has failed when trying to reliably deliver data
-   to the Remote Endpoint.  Adjusting this Property will only take
-   effect when the underlying stack supports reliability.  The special
-   value "Disabled" means that no timeout is scheduled.
+   This property specifies how long to wait before deciding that an
+   active Connection has failed when trying to reliably deliver data to
+   the Remote Endpoint.  Adjusting this Property will only take effect
+   when the underlying stack supports reliability.  The special value
+   "Disabled" means that no timeout is scheduled.
 
 6.1.4.  Timeout for keep alive packets
 
-   Name:  keepaliveTimeout
+   Name:  keepAliveTimeout
 
-   Type:  Numeric
+   Type:  Numeric, with special value "Disabled"
 
    Default:  Implementation-defined
 
    A Transport Services system can request a protocol that supports
    sending keep alive packets Section 4.2.10.  This property specifies
-   the maximum number of seconds an idle connection (one for which no
+   the maximum length of time an idle connection (one for which no
    transport packets have been sent) should wait before the Local
    Endpoint sends a keep-alive packet to the Remote Endpoint.  Adjusting
    this Property will only take effect when the underlying stack
    supports sending keep-alive packets.  Guidance on setting this value
    for datagram transports is provided in [RFC8085].  A value greater
-   than the connection timeout (Section 6.1.3) will disable the sending
-   of keep-alive packets.
+   than the connection timeout (Section 6.1.3), or the special value
+   "Disabled", will disable the sending of keep-alive packets.
 
 6.1.5.  Connection Group Transmission Scheduler
 
@@ -2062,12 +2052,32 @@ SecurityParameters.Set(signature-algorithm, "ed25519")
    Connection associated with this property.  For a multi-streaming
    transport, this limits the number of allowed streams.
 
-6.1.10.  Read-only Connection Properties
+6.1.10.  Isolate Session
+
+   Name:  isolateSession
+
+   Type:  Boolean
+
+   Default:  false
+
+   When set to true, this property will initiate new Connections using
+   as little cached information (such as session tickets or cookies) as
+   possible from previous connections that are not entangled with it.
+   Any state generated by this Connection will only be shared with
+   entangled connections.  Cloned Connections will use saved state from
+   within the Connection Group.
+
+   Note that this does not guarantee no leakage of information, as
+   implementations may not be able to fully isolate all caches (e.g.
+   RTT estimates).  Note that this property may degrade connection
+   performance.
+
+6.1.11.  Read-only Connection Properties
 
    The following generic Connection Properties are read-only, i.e. they
    cannot be changed by an application.
 
-6.1.10.1.  Maximum Message Size Concurrent with Connection Establishment
+6.1.11.1.  Maximum Message Size Concurrent with Connection Establishment
 
    Name:  zeroRttMsgMaxLen
 
@@ -2077,7 +2087,7 @@ SecurityParameters.Set(signature-algorithm, "ed25519")
    before or during Connection establishment, see also Section 7.1.3.4.
    It is given in Bytes.
 
-6.1.10.2.  Maximum Message Size Before Fragmentation or Segmentation
+6.1.11.2.  Maximum Message Size Before Fragmentation or Segmentation
 
    Name:  singularTransmissionMsgMaxLen
 
@@ -2089,7 +2099,7 @@ SecurityParameters.Set(signature-algorithm, "ed25519")
    Packet Size (MPS) as described in Datagram PLPMTUD
    [I-D.ietf-tsvwg-datagram-plpmtud].
 
-6.1.10.3.  Maximum Message Size on Send
+6.1.11.3.  Maximum Message Size on Send
 
    Name:  sendMsgMaxLen
 
@@ -2098,7 +2108,7 @@ SecurityParameters.Set(signature-algorithm, "ed25519")
    This property represents the maximum Message size that an application
    can send.
 
-6.1.10.4.  Maximum Message Size on Receive
+6.1.11.4.  Maximum Message Size on Receive
 
    Name:  recvMsgMaxLen
 
@@ -2625,7 +2635,7 @@ SecurityParameters.Set(signature-algorithm, "ed25519")
    Some transport protocols can deliver arbitrarily sized Messages, but
    other protocols constrain the maximum Message size.  Applications can
    query the Connection Property "Maximum Message size on send"
-   (Section 6.1.10.3) to determine the maximum size allowed for a single
+   (Section 6.1.11.3) to determine the maximum size allowed for a single
    Message.  If a Message is too large to fit in the Maximum Message
    Size for the Connection, the Send will fail with a SendError event
    (Section 7.2.2.3).  For example, it is invalid to send a Message over
@@ -2988,8 +2998,8 @@ Connection -> ReceivedPartial<messageData, messageContext, endOfMessage>
    application has already given to the Transport Services system.  For
    example, if reliable delivery was requested for a Message handed over
    before calling Close, the Closed Event will signify that this Message
-   has indeed been delivered.  If the Remote Endpoint still has data to
-   send, it cannot be received after this call.
+   has indeed been delivered.  This action does not affect any other
+   Connection that is entangled with this one in a Connection Group.
 
    Connection.Close()
 
@@ -2999,9 +3009,19 @@ Connection -> ReceivedPartial<messageData, messageContext, endOfMessage>
 
    Connection -> Closed<>
 
-   Abort terminates a Connection without delivering any remaining data:
+   Abort terminates a Connection without delivering any remaining data.
+   This action does not affect any other Connection that is entangled
+   with this one in a Connection Group.
 
    Connection.Abort()
+
+   AbortGroup terminates a Connection and also terminates any other
+   Connections that are entangled with this one in a Connection Group.
+   For example, all of the Connections in a group might be streams of a
+   single session for a multistreaming protocol; aborting the entire
+   group would close the underlying session.  See also Section 5.4.
+
+   Connection.AbortGroup()
 
    A ConnectionError informs the application that: 1) data could not be
    delivered to the peer after a timeout, or 2) the Connection has been
@@ -3182,10 +3202,10 @@ Connection -> ReceivedPartial<messageData, messageContext, endOfMessage>
 
    [I-D.ietf-taps-arch]
               Pauly, T., Trammell, B., Brunstrom, A., Fairhurst, G.,
-              Perkins, C., Tiesel, P., and C. Wood, "An Architecture for
-              Transport Services", Work in Progress, Internet-Draft,
-              draft-ietf-taps-arch-09, 2 November 2020,
-              <http://www.ietf.org/internet-drafts/draft-ietf-taps-arch-
+              Perkins, C., Tiesel, P. S., and C. A. Wood, "An
+              Architecture for Transport Services", Work in Progress,
+              Internet-Draft, draft-ietf-taps-arch-09, 2 November 2020,
+              <https://www.ietf.org/archive/id/draft-ietf-taps-arch-
               09.txt>.
 
    [RFC2119]  Bradner, S., "Key words for use in RFCs to Indicate
@@ -3229,15 +3249,15 @@ Connection -> ReceivedPartial<messageData, messageContext, endOfMessage>
               Oku, K. and L. Pardue, "Extensible Prioritization Scheme
               for HTTP", Work in Progress, Internet-Draft, draft-ietf-
               httpbis-priority-03, 11 January 2021,
-              <http://www.ietf.org/internet-drafts/draft-ietf-httpbis-
+              <https://www.ietf.org/archive/id/draft-ietf-httpbis-
               priority-03.txt>.
 
    [I-D.ietf-taps-impl]
               Brunstrom, A., Pauly, T., Enghardt, T., Grinnemo, K.,
-              Jones, T., Tiesel, P., Perkins, C., and M. Welzl,
+              Jones, T., Tiesel, P. S., Perkins, C., and M. Welzl,
               "Implementing Interfaces to Transport Services", Work in
               Progress, Internet-Draft, draft-ietf-taps-impl-08, 2
-              November 2020, <http://www.ietf.org/internet-drafts/draft-
+              November 2020, <https://www.ietf.org/archive/id/draft-
               ietf-taps-impl-08.txt>.
 
    [I-D.ietf-tsvwg-datagram-plpmtud]
@@ -3245,7 +3265,7 @@ Connection -> ReceivedPartial<messageData, messageContext, endOfMessage>
               T. Voelker, "Packetization Layer Path MTU Discovery for
               Datagram Transports", Work in Progress, Internet-Draft,
               draft-ietf-tsvwg-datagram-plpmtud-22, 10 June 2020,
-              <http://www.ietf.org/internet-drafts/draft-ietf-tsvwg-
+              <https://www.ietf.org/archive/id/draft-ietf-tsvwg-
               datagram-plpmtud-22.txt>.
 
    [RFC2474]  Nichols, K., Blake, S., Baker, F., and D. Black,
@@ -3402,6 +3422,12 @@ A.2.  Events and Errors
    with inconsistent Transport Properties.  An error can provide an
    optional reason to the application with further details about why the
    error occurred.
+
+A.3.  Time Duration
+
+   Time duration types are implementation-specific.  For instance, it
+   could be a number of seconds, number of milliseconds, or a "struct
+   timeval" in C or a user-defined "Duration" class in C++.
 
 Appendix B.  Convenience Functions
 
@@ -3569,11 +3595,11 @@ Appendix C.  Relationship to the Minimal Set of Transport Services for
    *  Get max. transport-message size that may be sent using a non-
       fragmented IP packet from the configured interface: "Maximum
       Message Size Before Fragmentation or Segmentation" property
-      (Section 6.1.10.2).
+      (Section 6.1.11.2).
 
    *  Get max. transport-message size that may be received from the
       configured interface: "Maximum Message Size on Receive" property
-      (Section 6.1.10.4).
+      (Section 6.1.11.4).
 
    *  Obtain ECN field: "ECN" is a defined UDP(-Lite)-specific read-only
       Message Property of the MessageContext object (Section 7.3.3.1).

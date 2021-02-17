@@ -5,7 +5,7 @@
 TAPS Working Group                                         T. Pauly, Ed.
 Internet-Draft                                                Apple Inc.
 Intended status: Standards Track                        B. Trammell, Ed.
-Expires: 1 August 2021                           Google Switzerland GmbH
+Expires: 21 August 2021                          Google Switzerland GmbH
                                                             A. Brunstrom
                                                      Karlstad University
                                                             G. Fairhurst
@@ -16,7 +16,7 @@ Expires: 1 August 2021                           Google Switzerland GmbH
                                                                TU Berlin
                                                                C.A. Wood
                                                               Cloudflare
-                                                         28 January 2021
+                                                        17 February 2021
 
 
                  An Architecture for Transport Services
@@ -50,7 +50,7 @@ Status of This Memo
    time.  It is inappropriate to use Internet-Drafts as reference
    material or to cite them other than as "work in progress."
 
-   This Internet-Draft will expire on 1 August 2021.
+   This Internet-Draft will expire on 21 August 2021.
 
 Copyright Notice
 
@@ -1104,11 +1104,11 @@ Table of Contents
 
    [I-D.ietf-taps-interface]
               Trammell, B., Welzl, M., Enghardt, T., Fairhurst, G.,
-              Kuehlewind, M., Perkins, C., Tiesel, P., Wood, C., and T.
-              Pauly, "An Abstract Application Layer Interface to
+              Kuehlewind, M., Perkins, C., Tiesel, P. S., Wood, C. A.,
+              and T. Pauly, "An Abstract Application Layer Interface to
               Transport Services", Work in Progress, Internet-Draft,
               draft-ietf-taps-interface-10, 2 November 2020,
-              <http://www.ietf.org/internet-drafts/draft-ietf-taps-
+              <https://www.ietf.org/archive/id/draft-ietf-taps-
               interface-10.txt>.
 
    [RFC2119]  Bradner, S., "Key words for use in RFCs to Indicate
@@ -1124,10 +1124,10 @@ Table of Contents
 
    [I-D.ietf-taps-impl]
               Brunstrom, A., Pauly, T., Enghardt, T., Grinnemo, K.,
-              Jones, T., Tiesel, P., Perkins, C., and M. Welzl,
+              Jones, T., Tiesel, P. S., Perkins, C., and M. Welzl,
               "Implementing Interfaces to Transport Services", Work in
               Progress, Internet-Draft, draft-ietf-taps-impl-08, 2
-              November 2020, <http://www.ietf.org/internet-drafts/draft-
+              November 2020, <https://www.ietf.org/archive/id/draft-
               ietf-taps-impl-08.txt>.
 
    [POSIX]    "IEEE Std. 1003.1-2008 Standard for Information Technology

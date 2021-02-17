@@ -5,7 +5,7 @@
 TAPS Working Group                                     A. Brunstrom, Ed.
 Internet-Draft                                       Karlstad University
 Intended status: Informational                             T. Pauly, Ed.
-Expires: 1 August 2021                                        Apple Inc.
+Expires: 21 August 2021                                       Apple Inc.
                                                              T. Enghardt
                                                                  Netflix
                                                            K-J. Grinnemo
@@ -18,7 +18,7 @@ Expires: 1 August 2021                                        Apple Inc.
                                                    University of Glasgow
                                                                 M. Welzl
                                                       University of Oslo
-                                                         28 January 2021
+                                                        17 February 2021
 
 
              Implementing Interfaces to Transport Services
@@ -48,7 +48,7 @@ Status of This Memo
    time.  It is inappropriate to use Internet-Drafts as reference
    material or to cite them other than as "work in progress."
 
-   This Internet-Draft will expire on 1 August 2021.
+   This Internet-Draft will expire on 21 August 2021.
 
 Copyright Notice
 
@@ -1241,11 +1241,21 @@ Aggregate [Endpoint: www.example.com:80] [Interface: Any]   [Protocol: TCP]
 
    Before an implementation marks a Message Framer as ready, it can also
    dynamically add a protocol or framer above it in the stack.  This
-   allows protocols like STARTTLS, that need to add TLS conditionally,
-   to modify the Protocol Stack based on a handshake result.
+   allows protocols that need to add TLS conditionally, like STARTTLS
+   [RFC3207], to modify the Protocol Stack based on a handshake result.
 
    otherFramer := NewMessageFramer()
    MessageFramer.PrependFramer(Connection, otherFramer)
+
+   A Message Framer might also choose to go into a passthrough mode once
+   an initial exchange or handshake has been completed, such as the
+   STARTTLS case mentioned above.  This can also be useful for proxy
+   protocols like SOCKS [RFC1928] or HTTP CONNECT [RFC7230].  In such
+   cases, a Message Framer implementation can intercept sending and
+   receiving of messages at first, but then indicate that no more
+   processing is needed.
+
+   MessageFramer.StartPassthrough()
 
 6.2.  Sender-side Message Framing
 
@@ -1371,6 +1381,20 @@ MessageFramer.Deliver(Connection, MessageContext, Data, IsEndOfMessage)
    not be forcibly disconnected if the previously used path becomes
    unavailable.
 
+   There are many common user scenarios that can lead to a path becoming
+   temporarily unavailable, and then recovering before the transport
+   protocol reaches a timeout error.  These are particularly common
+   using mobile devices.  Examples include: an Ethernet cable becoming
+   unplugged and then plugged back in; a device losing a Wi-Fi signal
+   while a user is in an elevator, and reattaching when the user leaves
+   the elevator; and a user losing the radio signal while riding a train
+   through a tunnel.  If the device is able to rejoin a network with the
+   same IP address, a stateful transport connection can generally
+   resume.  Thus, while it is useful for a Protocol Instance to be aware
+   of a temporary loss of connectivity, the Transport Services
+   implementation should not aggressively close connections in these
+   scenarios.
+
    If the Protocol Stack includes a transport protocol that also
    supports multipath connectivity with migration support, the Transport
    Services implementation should also inform the Protocol Instance of
@@ -1484,8 +1508,11 @@ MessageFramer.Deliver(Connection, MessageContext, Data, IsEndOfMessage)
    otherwise equally preferred, an implementation may choose to attempt
    a connection to an address for which it has a TCP Fast Open cookie.
 
-   Applications must have a way to flush protocol cache state if
-   desired.  This may be necessary, for example, if application-layer
+   Applications can request that a Connection Group maintain a separate
+   cache for protocol state.  Connections in the group will not use
+   cached state from connections outside the group, and connections
+   outside the group will not use state cached from connections inside
+   the group.  This may be necessary, for example, if application-layer
    identifiers rotate and clients wish to avoid linkability via
    trackable TLS tickets or TFO cookies.
 
@@ -1621,7 +1648,7 @@ MessageFramer.Deliver(Connection, MessageContext, Data, IsEndOfMessage)
 
    ConnectionError:  Once established, TCP throws errors whenever the
       connection is disconnected, such as due to receiving a RST from
-      the peer; or hitting a TCP retransmission timeout.
+      the peer.
 
    Listen:  LISTEN.TCP.  Calling "Listen" for TCP binds a local port and
       prepares it to receive inbound SYN packets from peers.
@@ -1649,19 +1676,26 @@ MessageFramer.Deliver(Connection, MessageContext, Data, IsEndOfMessage)
       on the TCP send stream without any other delineation.  Any Message
       marked as Final will cause TCP to send a FIN once the Message has
       been completely written, by calling CLOSE.TCP immediately upon
-      successful termination of SEND.TCP.
+      successful termination of SEND.TCP.  Note that transmitting a
+      Message marked as Final should not cause the "Closed" event to be
+      delivered to the application, as it will still be possible to
+      receive data until the peer closes or aborts the TCP connection.
 
    Receive:  With RECEIVE.TCP, TCP delivers a stream of bytes without
       any Message delineation.  All data delivered in the "Received" or
       "ReceivedPartial" event will be part of a single stream-wide
       Message that is marked Final (unless a Message Framer is used).
       EndOfMessage will be delivered when the TCP Connection has
-      received a FIN (CLOSE-EVENT.TCP or ABORT-EVENT.TCP) from the peer.
+      received a FIN (CLOSE-EVENT.TCP) from the peer.  Note that
+      reception of a FIN should not cause the "Closed" event to be
+      delivered to the application, as it will still be possible for the
+      application to send data.
 
    Close:  Calling "Close" on a TCP Connection indicates that the
       Connection should be gracefully closed (CLOSE.TCP) by sending a
-      FIN to the peer and waiting for a FIN-ACK before delivering the
-      "Closed" event.
+      FIN to the peer.  It will then still be possible to receive data
+      until the peer closes or aborts the TCP connection.  The "Closed"
+      event will be issued upon reception of a FIN.
 
    Abort:  Calling "Abort" on a TCP Connection indicates that the
       Connection should be immediately closed by sending a RST to the
@@ -1905,16 +1939,18 @@ MessageFramer.Deliver(Connection, MessageContext, Data, IsEndOfMessage)
       "ReceivedPartial" event.
 
    Close: If this is the only Connection object that is assigned to the
-   SCTP association, CLOSE.SCTP is called.  Else, the Connection object
-   is one out of several Connection objects that are assigned to the
-   same SCTP assocation, and RESET_STREAM.SCTP must be called, which
-   informs the peer that the stream will no longer be used for mapping
-   and can be used by future "Initiate", "InitiateWithSend" or "Listen"
-   calls.  At the peer, the event RESET_STREAM-EVENT.SCTP will fire,
-   which the peer must answer by issuing RESET_STREAM.SCTP too.  The
-   resulting local RESET_STREAM-EVENT.SCTP informs the transport system
-   that the stream number can now be re-used by the next "Initiate",
-   "InitiateWithSend" or "Listen" calls.
+   SCTP association, CLOSE.SCTP is called, and the "Closed" event will
+   be delivered to the application upon the ensuing CLOSE-EVENT.SCTP.
+   Else, the Connection object is one out of several Connection objects
+   that are assigned to the same SCTP assocation, and RESET_STREAM.SCTP
+   must be called, which informs the peer that the stream will no longer
+   be used for mapping and can be used by future "Initiate",
+   "InitiateWithSend" or "Listen" calls.  At the peer, the event
+   RESET_STREAM-EVENT.SCTP will fire, which the peer must answer by
+   issuing RESET_STREAM.SCTP too.  The resulting local RESET_STREAM-
+   EVENT.SCTP informs the transport system that the stream number can
+   now be re-used by the next "Initiate", "InitiateWithSend" or "Listen"
+   calls, and invokes a "Closed" event towards the application.
 
    Abort: If this is the only Connection object that is assigned to the
    SCTP association, ABORT.SCTP is called.  Else, the Connection object
@@ -1992,19 +2028,19 @@ MessageFramer.Deliver(Connection, MessageContext, Data, IsEndOfMessage)
 
    [I-D.ietf-taps-arch]
               Pauly, T., Trammell, B., Brunstrom, A., Fairhurst, G.,
-              Perkins, C., Tiesel, P., and C. Wood, "An Architecture for
-              Transport Services", Work in Progress, Internet-Draft,
-              draft-ietf-taps-arch-09, 2 November 2020,
-              <http://www.ietf.org/internet-drafts/draft-ietf-taps-arch-
+              Perkins, C., Tiesel, P. S., and C. A. Wood, "An
+              Architecture for Transport Services", Work in Progress,
+              Internet-Draft, draft-ietf-taps-arch-09, 2 November 2020,
+              <https://www.ietf.org/archive/id/draft-ietf-taps-arch-
               09.txt>.
 
    [I-D.ietf-taps-interface]
               Trammell, B., Welzl, M., Enghardt, T., Fairhurst, G.,
-              Kuehlewind, M., Perkins, C., Tiesel, P., Wood, C., and T.
-              Pauly, "An Abstract Application Layer Interface to
+              Kuehlewind, M., Perkins, C., Tiesel, P. S., Wood, C. A.,
+              and T. Pauly, "An Abstract Application Layer Interface to
               Transport Services", Work in Progress, Internet-Draft,
               draft-ietf-taps-interface-10, 2 November 2020,
-              <http://www.ietf.org/internet-drafts/draft-ietf-taps-
+              <https://www.ietf.org/archive/id/draft-ietf-taps-
               interface-10.txt>.
 
    [RFC7413]  Cheng, Y., Chu, J., Radhakrishnan, S., and A. Jain, "TCP
@@ -2057,23 +2093,32 @@ MessageFramer.Deliver(Connection, MessageContext, Data, IsEndOfMessage)
               Iyengar, J. and M. Thomson, "QUIC: A UDP-Based Multiplexed
               and Secure Transport", Work in Progress, Internet-Draft,
               draft-ietf-quic-transport-34, 14 January 2021,
-              <http://www.ietf.org/internet-drafts/draft-ietf-quic-
+              <https://www.ietf.org/archive/id/draft-ietf-quic-
               transport-34.txt>.
 
    [I-D.ietf-tcpm-2140bis]
               Touch, J., Welzl, M., and S. Islam, "TCP Control Block
               Interdependence", Work in Progress, Internet-Draft, draft-
-              ietf-tcpm-2140bis-07, 28 December 2020,
-              <http://www.ietf.org/internet-drafts/draft-ietf-tcpm-
-              2140bis-07.txt>.
+              ietf-tcpm-2140bis-09, 8 February 2021,
+              <https://www.ietf.org/archive/id/draft-ietf-tcpm-2140bis-
+              09.txt>.
 
    [NEAT-flow-mapping]
               "Transparent Flow Mapping for NEAT", Workshop on Future of
               Internet Transport (FIT 2017) , 2017.
 
+   [RFC1928]  Leech, M., Ganis, M., Lee, Y., Kuris, R., Koblas, D., and
+              L. Jones, "SOCKS Protocol Version 5", RFC 1928,
+              DOI 10.17487/RFC1928, March 1996,
+              <https://www.rfc-editor.org/info/rfc1928>.
+
    [RFC3124]  Balakrishnan, H. and S. Seshan, "The Congestion Manager",
               RFC 3124, DOI 10.17487/RFC3124, June 2001,
               <https://www.rfc-editor.org/info/rfc3124>.
+
+   [RFC3207]  Hoffman, P., "SMTP Service Extension for Secure SMTP over
+              Transport Layer Security", RFC 3207, DOI 10.17487/RFC3207,
+              February 2002, <https://www.rfc-editor.org/info/rfc3207>.
 
    [RFC5389]  Rosenberg, J., Mahy, R., Matthews, P., and D. Wing,
               "Session Traversal Utilities for NAT (STUN)", RFC 5389,
@@ -2093,6 +2138,11 @@ MessageFramer.Deliver(Connection, MessageContext, Data, IsEndOfMessage)
    [RFC6763]  Cheshire, S. and M. Krochmal, "DNS-Based Service
               Discovery", RFC 6763, DOI 10.17487/RFC6763, February 2013,
               <https://www.rfc-editor.org/info/rfc6763>.
+
+   [RFC7230]  Fielding, R., Ed. and J. Reschke, Ed., "Hypertext Transfer
+              Protocol (HTTP/1.1): Message Syntax and Routing",
+              RFC 7230, DOI 10.17487/RFC7230, June 2014,
+              <https://www.rfc-editor.org/info/rfc7230>.
 
    [RFC7657]  Black, D., Ed. and P. Jones, "Differentiated Services
               (Diffserv) and Real-Time Communication", RFC 7657,
